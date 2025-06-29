@@ -219,19 +219,6 @@ function generateThumbnailFilename($noteId, $extension = 'jpg') {
 /**
  * Log de actividad para thumbnails (útil para debugging)
  */
-function logThumbnailActivity($message, $noteId = null) {
-    $logFile = UPLOAD_DIR . 'thumbnail_activity.log';
-    $timestamp = date('Y-m-d H:i:s');
-    $logMessage = "[$timestamp]";
-    
-    if ($noteId) {
-        $logMessage .= " [Note: $noteId]";
-    }
-    
-    $logMessage .= " $message" . PHP_EOL;
-    
-    file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
-}
 
 /**
  * Obtiene estadísticas de thumbnails
