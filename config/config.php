@@ -1,5 +1,5 @@
 <?php
-// config/config.php - CORREGIDO PARA VIDEOS
+// config/config.php - CORREGIDO SIN DUPLICADOS
 
 // Configuración de la aplicación
 define('BASE_URL', 'http://localhost/panel-oste/');
@@ -107,5 +107,160 @@ function uploadFile($file, $allowed_types = ['jpg', 'jpeg', 'png', 'gif', 'mp4',
 function extractYouTubeId($url) {
     preg_match('/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/', $url, $matches);
     return isset($matches[1]) ? $matches[1] : false;
+}
+
+// FUNCIONES HELPER PARA THUMBNAILS (sin duplicar las funciones principales)
+
+/**
+ * Verifica si FFmpeg está disponible en el sistema
+ */
+function checkFFmpegAvailability() {
+    $output = shell_exec('ffmpeg -version 2>&1');
+    return strpos($output, 'ffmpeg version') !== false;
+}
+
+/**
+ * Crea el directorio de thumbnails si no existe
+ */
+function ensureThumbnailDirectory() {
+    $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
+    if (!is_dir($thumbnailDir)) {
+        mkdir($thumbnailDir, 0755, true);
+    }
+    return $thumbnailDir;
+}
+
+/**
+ * Obtiene información de un video usando FFprobe (si está disponible)
+ */
+function getVideoInfo($videoPath) {
+    if (!checkFFmpegAvailability()) {
+        return null;
+    }
+    
+    $command = sprintf(
+        'ffprobe -v quiet -print_format json -show_format -show_streams %s 2>&1',
+        escapeshellarg($videoPath)
+    );
+    
+    $output = shell_exec($command);
+    $info = json_decode($output, true);
+    
+    return $info;
+}
+
+/**
+ * Limpia thumbnails antiguos (útil para mantenimiento)
+ */
+function cleanupOldThumbnails($days = 30) {
+    $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
+    if (!is_dir($thumbnailDir)) {
+        return false;
+    }
+    
+    $files = glob($thumbnailDir . '*');
+    $now = time();
+    $deleted = 0;
+    
+    foreach ($files as $file) {
+        if (is_file($file)) {
+            if ($now - filemtime($file) >= (60 * 60 * 24 * $days)) {
+                unlink($file);
+                $deleted++;
+            }
+        }
+    }
+    
+    return $deleted;
+}
+
+/**
+ * Obtiene el tamaño de un archivo de video de forma segura
+ */
+function getVideoFileSize($videoPath) {
+    if (!file_exists($videoPath)) {
+        return false;
+    }
+    
+    return filesize($videoPath);
+}
+
+/**
+ * Valida si un archivo es un video válido
+ */
+function isValidVideoFile($filePath) {
+    if (!file_exists($filePath)) {
+        return false;
+    }
+    
+    $allowedExtensions = ['mp4', 'mov', 'avi', 'mkv', 'webm', 'flv', 'wmv'];
+    $extension = strtolower(pathinfo($filePath, PATHINFO_EXTENSION));
+    
+    if (!in_array($extension, $allowedExtensions)) {
+        return false;
+    }
+    
+    // Verificar MIME type si la función está disponible
+    if (function_exists('mime_content_type')) {
+        $mimeType = mime_content_type($filePath);
+        return strpos($mimeType, 'video/') === 0;
+    }
+    
+    return true;
+}
+
+/**
+ * Genera un nombre único para el thumbnail
+ */
+function generateThumbnailFilename($noteId, $extension = 'jpg') {
+    return 'thumb_' . $noteId . '_' . time() . '.' . $extension;
+}
+
+/**
+ * Log de actividad para thumbnails (útil para debugging)
+ */
+function logThumbnailActivity($message, $noteId = null) {
+    $logFile = UPLOAD_DIR . 'thumbnail_activity.log';
+    $timestamp = date('Y-m-d H:i:s');
+    $logMessage = "[$timestamp]";
+    
+    if ($noteId) {
+        $logMessage .= " [Note: $noteId]";
+    }
+    
+    $logMessage .= " $message" . PHP_EOL;
+    
+    file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
+}
+
+/**
+ * Obtiene estadísticas de thumbnails
+ */
+function getThumbnailStats() {
+    $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
+    
+    if (!is_dir($thumbnailDir)) {
+        return [
+            'total_files' => 0,
+            'total_size' => 0,
+            'ffmpeg_available' => checkFFmpegAvailability()
+        ];
+    }
+    
+    $files = glob($thumbnailDir . '*');
+    $totalSize = 0;
+    
+    foreach ($files as $file) {
+        if (is_file($file)) {
+            $totalSize += filesize($file);
+        }
+    }
+    
+    return [
+        'total_files' => count($files),
+        'total_size' => $totalSize,
+        'total_size_mb' => round($totalSize / 1024 / 1024, 2),
+        'ffmpeg_available' => checkFFmpegAvailability()
+    ];
 }
 ?>

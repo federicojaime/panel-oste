@@ -1,9 +1,112 @@
 <?php
-// note-form.php - Formulario para crear y editar notas
+// note-form.php - CORREGIDO SIN GD
 require_once 'config/config.php';
 require_once 'config/database.php';
 
 requireAuth();
+
+// Funciones para generar thumbnails (SIN GD)
+function generateThumbnailOnUpload($videoPath, $noteId) {
+    try {
+        // Intentar con FFmpeg primero
+        if (isFFmpegAvailable()) {
+            return generateFFmpegThumbnail($videoPath, $noteId);
+        }
+        
+        // Si no hay FFmpeg, crear archivo de texto como placeholder
+        return generateTextPlaceholder($noteId);
+        
+    } catch (Exception $e) {
+        error_log("Error generando thumbnail: " . $e->getMessage());
+        return null;
+    }
+}
+
+function isFFmpegAvailable() {
+    $output = shell_exec('ffmpeg -version 2>&1');
+    return strpos($output, 'ffmpeg version') !== false;
+}
+
+function generateFFmpegThumbnail($videoPath, $noteId) {
+    $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
+    if (!is_dir($thumbnailDir)) {
+        mkdir($thumbnailDir, 0755, true);
+    }
+    
+    $thumbnailName = 'thumb_' . $noteId . '_' . time() . '.jpg';
+    $thumbnailPath = $thumbnailDir . $thumbnailName;
+    
+    // Intentar diferentes tiempos para capturar un buen frame
+    $timeStamps = ['00:00:01', '00:00:02', '00:00:05'];
+    
+    foreach ($timeStamps as $time) {
+        $command = sprintf(
+            'ffmpeg -i %s -ss %s -vframes 1 -q:v 2 -y %s 2>&1',
+            escapeshellarg($videoPath),
+            $time,
+            escapeshellarg($thumbnailPath)
+        );
+        
+        $output = shell_exec($command);
+        
+        if (file_exists($thumbnailPath) && filesize($thumbnailPath) > 0) {
+            logThumbnailActivity("FFmpeg thumbnail generado exitosamente en $time", $noteId);
+            return $thumbnailName;
+        }
+    }
+    
+    // Si FFmpeg falla, usar placeholder de texto
+    logThumbnailActivity("FFmpeg falló, usando placeholder de texto", $noteId);
+    return generateTextPlaceholder($noteId);
+}
+
+function generateTextPlaceholder($noteId) {
+    $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
+    if (!is_dir($thumbnailDir)) {
+        mkdir($thumbnailDir, 0755, true);
+    }
+    
+    // Crear un archivo SVG como placeholder (no requiere GD)
+    $thumbnailName = 'placeholder_' . $noteId . '.svg';
+    $thumbnailPath = $thumbnailDir . $thumbnailName;
+    
+    $svgContent = '<?xml version="1.0" encoding="UTF-8"?>
+<svg width="640" height="360" viewBox="0 0 640 360" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#2D3748;stop-opacity:1" />
+            <stop offset="100%" style="stop-color:#4A5568;stop-opacity:1" />
+        </linearGradient>
+    </defs>
+    <rect width="640" height="360" fill="url(#grad1)"/>
+    <circle cx="320" cy="150" r="40" fill="#EF4444"/>
+    <polygon points="305,135 305,165 340,150" fill="white"/>
+    <text x="320" y="220" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="white" text-anchor="middle">VIDEO</text>
+    <text x="320" y="250" font-family="Arial, sans-serif" font-size="14" fill="#CBD5E0" text-anchor="middle">Nota ' . $noteId . '</text>
+</svg>';
+    
+    if (file_put_contents($thumbnailPath, $svgContent)) {
+        logThumbnailActivity("SVG placeholder generado", $noteId);
+        return $thumbnailName;
+    }
+    
+    return null;
+}
+
+// Función de logging (requiere la función del config.php)
+function logThumbnailActivity($message, $noteId = null) {
+    $logFile = UPLOAD_DIR . 'thumbnail_activity.log';
+    $timestamp = date('Y-m-d H:i:s');
+    $logMessage = "[$timestamp]";
+    
+    if ($noteId) {
+        $logMessage .= " [Note: $noteId]";
+    }
+    
+    $logMessage .= " $message" . PHP_EOL;
+    
+    file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
+}
 
 $database = new Database();
 $db = $database->getConnection();
@@ -27,6 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $media_type = $_POST['media_type'];
         
         $media_url = '';
+        $thumbnail_file = null;
 
         // Procesar media
         if ($media_type === 'youtube' && !empty($_POST['youtube_url'])) {
@@ -38,6 +142,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $media_upload_result = uploadFile($_FILES['media_file']);
             if ($media_upload_result['success']) {
                 $media_url = $media_upload_result['filename'];
+                
+                // Generar thumbnail para videos
+                if ($media_type === 'video') {
+                    $thumbnailFile = generateThumbnailOnUpload($media_upload_result['path'], $note_id ?: uniqid());
+                    if ($thumbnailFile) {
+                        $thumbnail_file = $thumbnailFile;
+                        error_log("Thumbnail generado exitosamente: " . $thumbnailFile);
+                        
+                        // Determinar el tipo de thumbnail generado
+                        $thumbType = isFFmpegAvailable() ? 'FFmpeg' : 'SVG Placeholder';
+                        $success_message = "Video subido correctamente. Thumbnail generado con $thumbType.";
+                    } else {
+                        error_log("Warning: No se pudo generar thumbnail para video");
+                        $success_message = "Video subido correctamente. No se pudo generar thumbnail.";
+                    }
+                }
+                
             } else {
                 $error_message = $media_upload_result['message'];
             }
@@ -63,6 +184,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $query .= ", media_url = :media_url";
                     }
                     
+                    if (!empty($thumbnail_file)) {
+                        $query .= ", thumbnail_url = :thumbnail_url";
+                    }
+                    
                     $query .= " WHERE id = :id";
                     
                     $stmt = $db->prepare($query);
@@ -79,15 +204,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $stmt->bindParam(':media_url', $media_url);
                     }
                     
+                    if (!empty($thumbnail_file)) {
+                        $stmt->bindParam(':thumbnail_url', $thumbnail_file);
+                    }
+                    
                     if ($stmt->execute()) {
-                        $success_message = 'Nota actualizada correctamente';
+                        if (empty($success_message)) {
+                            $success_message = 'Nota actualizada correctamente';
+                        }
                     }
                 } else {
                     // Crear nueva nota
                     $query = "INSERT INTO literary_notes 
-                             (title, content, excerpt, status, featured, external_url, media_url, media_type, author_id, created_at) 
+                             (title, content, excerpt, status, featured, external_url, media_url, media_type, thumbnail_url, author_id, created_at) 
                              VALUES 
-                             (:title, :content, :excerpt, :status, :featured, :external_url, :media_url, :media_type, :author_id, NOW())";
+                             (:title, :content, :excerpt, :status, :featured, :external_url, :media_url, :media_type, :thumbnail_url, :author_id, NOW())";
                     
                     $stmt = $db->prepare($query);
                     $stmt->bindParam(':title', $title);
@@ -98,11 +229,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $stmt->bindParam(':external_url', $external_url);
                     $stmt->bindParam(':media_url', $media_url);
                     $stmt->bindParam(':media_type', $media_type);
+                    $stmt->bindParam(':thumbnail_url', $thumbnail_file);
                     $stmt->bindParam(':author_id', $_SESSION['admin_id']);
                     
                     if ($stmt->execute()) {
                         $note_id = $db->lastInsertId();
-                        $success_message = 'Nota creada correctamente';
+                        if (empty($success_message)) {
+                            $success_message = 'Nota creada correctamente';
+                        }
                     }
                 }
             } catch (PDOException $e) {
@@ -297,7 +431,7 @@ if ($note_id) {
                                     <label class="flex items-center">
                                         <input type="radio" name="media_type" value="video" class="text-accent focus:ring-accent"
                                                <?php echo ($note && $note['media_type'] === 'video') ? 'checked' : ''; ?>>
-                                        <span class="ml-2 text-sm">Video</span>
+                                        <span class="ml-2 text-sm">Video Local</span>
                                     </label>
                                     <label class="flex items-center">
                                         <input type="radio" name="media_type" value="youtube" class="text-accent focus:ring-accent"
@@ -320,7 +454,10 @@ if ($note_id) {
                                     class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
                                 >
                                 <p class="text-xs text-gray-500 mt-1">
-                                    Máximo 10MB. Formatos: JPG, PNG, GIF, MP4, MOV
+                                    Máximo 100MB. Formatos: JPG, PNG, GIF, MP4, MOV, AVI, WEBM
+                                </p>
+                                <p class="text-xs text-blue-600 mt-1">
+                                    🎬 Los videos generarán thumbnail automáticamente
                                 </p>
                             </div>
 
@@ -343,6 +480,7 @@ if ($note_id) {
                             <?php if ($note && $note['media_url']): ?>
                                 <div class="border border-gray-200 rounded p-3">
                                     <p class="text-sm font-medium text-gray-700 mb-2">Media actual:</p>
+                                    
                                     <?php if ($note['media_type'] === 'youtube'): ?>
                                         <iframe 
                                             width="100%" 
@@ -353,9 +491,27 @@ if ($note_id) {
                                             class="rounded"
                                         ></iframe>
                                     <?php elseif ($note['media_type'] === 'video'): ?>
-                                        <video controls class="w-full rounded max-h-32">
-                                            <source src="uploads/<?php echo escape($note['media_url']); ?>" type="video/mp4">
-                                        </video>
+                                        <div class="space-y-2">
+                                            <!-- Mostrar thumbnail si existe -->
+                                            <?php if ($note['thumbnail_url']): ?>
+                                                <div>
+                                                    <p class="text-xs text-gray-500 mb-1">Thumbnail:</p>
+                                                    <?php if (strpos($note['thumbnail_url'], '.svg') !== false): ?>
+                                                        <img src="uploads/thumbnails/<?php echo escape($note['thumbnail_url']); ?>" 
+                                                             alt="Thumbnail SVG" 
+                                                             class="w-full rounded max-h-24 object-cover">
+                                                    <?php else: ?>
+                                                        <img src="uploads/thumbnails/<?php echo escape($note['thumbnail_url']); ?>" 
+                                                             alt="Thumbnail" 
+                                                             class="w-full rounded max-h-24 object-cover">
+                                                    <?php endif; ?>
+                                                </div>
+                                            <?php endif; ?>
+                                            
+                                            <video controls class="w-full rounded max-h-32">
+                                                <source src="uploads/<?php echo escape($note['media_url']); ?>" type="video/mp4">
+                                            </video>
+                                        </div>
                                     <?php else: ?>
                                         <img src="uploads/<?php echo escape($note['media_url']); ?>" alt="Media" class="w-full rounded max-h-32 object-cover">
                                     <?php endif; ?>
@@ -379,6 +535,17 @@ if ($note_id) {
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
                                 placeholder="https://ejemplo.com/articulo"
                             >
+                        </div>
+                    </div>
+
+                    <!-- Info de thumbnails -->
+                    <div class="bg-blue-50 p-4 rounded-lg">
+                        <h3 class="text-lg font-medium text-blue-900 mb-2">🎬 Thumbnails de Video</h3>
+                        <div class="text-sm text-blue-800 space-y-1">
+                            <p>• FFmpeg: <?php echo isFFmpegAvailable() ? '✅ Disponible' : '❌ No disponible'; ?></p>
+                            <p>• GD Extension: <?php echo extension_loaded('gd') ? '✅ Disponible' : '❌ No disponible'; ?></p>
+                            <p>• Fallback: Placeholder SVG</p>
+                            <p>• Ubicación: uploads/thumbnails/</p>
                         </div>
                     </div>
                 </div>

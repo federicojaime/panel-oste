@@ -33,7 +33,7 @@ try {
                 $stmt->bindParam(':id', $id, PDO::PARAM_INT);
                 $stmt->execute();
                 $note = $stmt->fetch(PDO::FETCH_ASSOC);
-                
+
                 if ($note) {
                     // Formatear media_url para el frontend
                     $media = null;
@@ -45,7 +45,7 @@ try {
                             $media = BASE_URL . 'uploads/' . $note['media_url'];
                         }
                     }
-                    
+
                     // Formatear para compatibilidad con el JSON existente
                     $formatted_note = [
                         'id' => intval($note['id']),
@@ -56,11 +56,12 @@ try {
                         'media' => $media,
                         'media_type' => $note['media_type'],
                         'video' => $note['media_type'] === 'video' ? $media : null,
+                        'thumbnail' => $note['thumbnail_url'] ? BASE_URL . 'uploads/thumbnails/' . $note['thumbnail_url'] : null, // NUEVO
                         'featured' => (bool)$note['featured'],
                         'created_at' => $note['created_at'],
                         'updated_at' => $note['updated_at']
                     ];
-                    
+
                     echo json_encode($formatted_note, JSON_UNESCAPED_UNICODE);
                 } else {
                     http_response_code(404);
@@ -71,32 +72,32 @@ try {
                 $page = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
                 $limit = isset($_GET['limit']) ? min(50, max(1, intval($_GET['limit']))) : 20;
                 $offset = ($page - 1) * $limit;
-                
+
                 // Filtros opcionales
                 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
                 $featured_only = isset($_GET['featured']) && $_GET['featured'] === 'true';
-                
+
                 // Construir query con filtros
                 $where_conditions = ["status = 'published'"];
                 $params = [];
-                
+
                 if (!empty($search)) {
                     $where_conditions[] = "(title LIKE :search OR content LIKE :search)";
                     $params[':search'] = '%' . $search . '%';
                 }
-                
+
                 if ($featured_only) {
                     $where_conditions[] = "featured = 1";
                 }
-                
+
                 $where_clause = implode(' AND ', $where_conditions);
-                
+
                 // Query principal
                 $query = "SELECT * FROM literary_notes 
                          WHERE $where_clause 
                          ORDER BY created_at DESC 
                          LIMIT :limit OFFSET :offset";
-                
+
                 $stmt = $db->prepare($query);
                 foreach ($params as $key => $value) {
                     $stmt->bindValue($key, $value);
@@ -105,7 +106,7 @@ try {
                 $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
                 $stmt->execute();
                 $notes = $stmt->fetchAll(PDO::FETCH_ASSOC);
-                
+
                 // Query para contar total
                 $count_query = "SELECT COUNT(*) as total FROM literary_notes WHERE $where_clause";
                 $count_stmt = $db->prepare($count_query);
@@ -114,7 +115,7 @@ try {
                 }
                 $count_stmt->execute();
                 $total = $count_stmt->fetch(PDO::FETCH_ASSOC)['total'];
-                
+
                 // Formatear notas para compatibilidad con el JSON existente
                 $formatted_notes = [];
                 foreach ($notes as $note) {
@@ -126,7 +127,7 @@ try {
                             $media = BASE_URL . 'uploads/' . $note['media_url'];
                         }
                     }
-                    
+
                     $formatted_notes[] = [
                         'id' => intval($note['id']),
                         'title' => $note['title'],
@@ -141,7 +142,7 @@ try {
                         'updated_at' => $note['updated_at']
                     ];
                 }
-                
+
                 // Respuesta con metadatos de paginación
                 $response = [
                     'data' => $formatted_notes,
@@ -154,11 +155,11 @@ try {
                         'has_prev' => $page > 1
                     ]
                 ];
-                
+
                 echo json_encode($response, JSON_UNESCAPED_UNICODE);
             }
             break;
-            
+
         default:
             http_response_code(405);
             echo json_encode(['error' => 'Método no permitido'], JSON_UNESCAPED_UNICODE);
