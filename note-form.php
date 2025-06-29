@@ -1,112 +1,9 @@
 <?php
-// note-form.php - CORREGIDO SIN GD
+// note-form.php - COMPLETO CON THUMBNAIL MANUAL
 require_once 'config/config.php';
 require_once 'config/database.php';
 
 requireAuth();
-
-// Funciones para generar thumbnails (SIN GD)
-function generateThumbnailOnUpload($videoPath, $noteId) {
-    try {
-        // Intentar con FFmpeg primero
-        if (isFFmpegAvailable()) {
-            return generateFFmpegThumbnail($videoPath, $noteId);
-        }
-        
-        // Si no hay FFmpeg, crear archivo de texto como placeholder
-        return generateTextPlaceholder($noteId);
-        
-    } catch (Exception $e) {
-        error_log("Error generando thumbnail: " . $e->getMessage());
-        return null;
-    }
-}
-
-function isFFmpegAvailable() {
-    $output = shell_exec('ffmpeg -version 2>&1');
-    return strpos($output, 'ffmpeg version') !== false;
-}
-
-function generateFFmpegThumbnail($videoPath, $noteId) {
-    $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
-    if (!is_dir($thumbnailDir)) {
-        mkdir($thumbnailDir, 0755, true);
-    }
-    
-    $thumbnailName = 'thumb_' . $noteId . '_' . time() . '.jpg';
-    $thumbnailPath = $thumbnailDir . $thumbnailName;
-    
-    // Intentar diferentes tiempos para capturar un buen frame
-    $timeStamps = ['00:00:01', '00:00:02', '00:00:05'];
-    
-    foreach ($timeStamps as $time) {
-        $command = sprintf(
-            'ffmpeg -i %s -ss %s -vframes 1 -q:v 2 -y %s 2>&1',
-            escapeshellarg($videoPath),
-            $time,
-            escapeshellarg($thumbnailPath)
-        );
-        
-        $output = shell_exec($command);
-        
-        if (file_exists($thumbnailPath) && filesize($thumbnailPath) > 0) {
-            logThumbnailActivity("FFmpeg thumbnail generado exitosamente en $time", $noteId);
-            return $thumbnailName;
-        }
-    }
-    
-    // Si FFmpeg falla, usar placeholder de texto
-    logThumbnailActivity("FFmpeg falló, usando placeholder de texto", $noteId);
-    return generateTextPlaceholder($noteId);
-}
-
-function generateTextPlaceholder($noteId) {
-    $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
-    if (!is_dir($thumbnailDir)) {
-        mkdir($thumbnailDir, 0755, true);
-    }
-    
-    // Crear un archivo SVG como placeholder (no requiere GD)
-    $thumbnailName = 'placeholder_' . $noteId . '.svg';
-    $thumbnailPath = $thumbnailDir . $thumbnailName;
-    
-    $svgContent = '<?xml version="1.0" encoding="UTF-8"?>
-<svg width="640" height="360" viewBox="0 0 640 360" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-        <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" style="stop-color:#2D3748;stop-opacity:1" />
-            <stop offset="100%" style="stop-color:#4A5568;stop-opacity:1" />
-        </linearGradient>
-    </defs>
-    <rect width="640" height="360" fill="url(#grad1)"/>
-    <circle cx="320" cy="150" r="40" fill="#EF4444"/>
-    <polygon points="305,135 305,165 340,150" fill="white"/>
-    <text x="320" y="220" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="white" text-anchor="middle">VIDEO</text>
-    <text x="320" y="250" font-family="Arial, sans-serif" font-size="14" fill="#CBD5E0" text-anchor="middle">Nota ' . $noteId . '</text>
-</svg>';
-    
-    if (file_put_contents($thumbnailPath, $svgContent)) {
-        logThumbnailActivity("SVG placeholder generado", $noteId);
-        return $thumbnailName;
-    }
-    
-    return null;
-}
-
-// Función de logging (requiere la función del config.php)
-function logThumbnailActivity($message, $noteId = null) {
-    $logFile = UPLOAD_DIR . 'thumbnail_activity.log';
-    $timestamp = date('Y-m-d H:i:s');
-    $logMessage = "[$timestamp]";
-    
-    if ($noteId) {
-        $logMessage .= " [Note: $noteId]";
-    }
-    
-    $logMessage .= " $message" . PHP_EOL;
-    
-    file_put_contents($logFile, $logMessage, FILE_APPEND | LOCK_EX);
-}
 
 $database = new Database();
 $db = $database->getConnection();
@@ -142,25 +39,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $media_upload_result = uploadFile($_FILES['media_file']);
             if ($media_upload_result['success']) {
                 $media_url = $media_upload_result['filename'];
-                
-                // Generar thumbnail para videos
-                if ($media_type === 'video') {
-                    $thumbnailFile = generateThumbnailOnUpload($media_upload_result['path'], $note_id ?: uniqid());
-                    if ($thumbnailFile) {
-                        $thumbnail_file = $thumbnailFile;
-                        error_log("Thumbnail generado exitosamente: " . $thumbnailFile);
-                        
-                        // Determinar el tipo de thumbnail generado
-                        $thumbType = isFFmpegAvailable() ? 'FFmpeg' : 'SVG Placeholder';
-                        $success_message = "Video subido correctamente. Thumbnail generado con $thumbType.";
-                    } else {
-                        error_log("Warning: No se pudo generar thumbnail para video");
-                        $success_message = "Video subido correctamente. No se pudo generar thumbnail.";
-                    }
-                }
-                
             } else {
                 $error_message = $media_upload_result['message'];
+            }
+        }
+
+        // Procesar thumbnail manual si se subió
+        if (isset($_FILES['thumbnail_file']) && $_FILES['thumbnail_file']['error'] === UPLOAD_ERR_OK) {
+            $thumbnail_upload_result = uploadFile($_FILES['thumbnail_file'], ['jpg', 'jpeg', 'png', 'gif', 'webp']);
+            if ($thumbnail_upload_result['success']) {
+                // Mover a carpeta thumbnails
+                $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
+                if (!is_dir($thumbnailDir)) {
+                    mkdir($thumbnailDir, 0755, true);
+                }
+                
+                $extension = pathinfo($thumbnail_upload_result['filename'], PATHINFO_EXTENSION);
+                $thumbnailName = 'manual_' . ($note_id ?: uniqid()) . '_' . time() . '.' . $extension;
+                $newThumbnailPath = $thumbnailDir . $thumbnailName;
+                
+                if (rename($thumbnail_upload_result['path'], $newThumbnailPath)) {
+                    $thumbnail_file = $thumbnailName;
+                    $success_message = "Thumbnail subido correctamente.";
+                }
+            }
+        }
+
+        // Si es video y no hay thumbnail manual, generar automático
+        if ($media_type === 'video' && !$thumbnail_file && $media_url) {
+            $videoPath = UPLOAD_DIR . $media_url;
+            if (file_exists($videoPath)) {
+                $thumbnailFile = generateThumbnailSimple($videoPath, $note_id ?: uniqid());
+                if ($thumbnailFile) {
+                    $thumbnail_file = $thumbnailFile;
+                    if (empty($success_message)) {
+                        $success_message = "Video subido. Thumbnail generado automáticamente.";
+                    }
+                }
             }
         }
 
@@ -456,8 +371,25 @@ if ($note_id) {
                                 <p class="text-xs text-gray-500 mt-1">
                                     Máximo 100MB. Formatos: JPG, PNG, GIF, MP4, MOV, AVI, WEBM
                                 </p>
+                            </div>
+
+                            <!-- Thumbnail manual SOLO para videos -->
+                            <div id="thumbnail-upload" class="media-option hidden">
+                                <label for="thumbnail_file" class="block text-sm font-medium text-gray-700 mb-2">
+                                    🎬 Thumbnail del Video (opcional)
+                                </label>
+                                <input 
+                                    type="file" 
+                                    id="thumbnail_file" 
+                                    name="thumbnail_file"
+                                    accept="image/*"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-accent"
+                                >
                                 <p class="text-xs text-blue-600 mt-1">
-                                    🎬 Los videos generarán thumbnail automáticamente
+                                    ⭐ Sube una imagen como miniatura del video
+                                </p>
+                                <p class="text-xs text-gray-500 mt-1">
+                                    Si no subes thumbnail, se generará uno automáticamente
                                 </p>
                             </div>
 
@@ -495,7 +427,7 @@ if ($note_id) {
                                             <!-- Mostrar thumbnail si existe -->
                                             <?php if ($note['thumbnail_url']): ?>
                                                 <div>
-                                                    <p class="text-xs text-gray-500 mb-1">Thumbnail:</p>
+                                                    <p class="text-xs text-gray-500 mb-1">Thumbnail actual:</p>
                                                     <?php if (strpos($note['thumbnail_url'], '.svg') !== false): ?>
                                                         <img src="uploads/thumbnails/<?php echo escape($note['thumbnail_url']); ?>" 
                                                              alt="Thumbnail SVG" 
@@ -540,12 +472,11 @@ if ($note_id) {
 
                     <!-- Info de thumbnails -->
                     <div class="bg-blue-50 p-4 rounded-lg">
-                        <h3 class="text-lg font-medium text-blue-900 mb-2">🎬 Thumbnails de Video</h3>
+                        <h3 class="text-lg font-medium text-blue-900 mb-2">💡 Thumbnails</h3>
                         <div class="text-sm text-blue-800 space-y-1">
-                            <p>• FFmpeg: <?php echo isFFmpegAvailable() ? '✅ Disponible' : '❌ No disponible'; ?></p>
-                            <p>• GD Extension: <?php echo extension_loaded('gd') ? '✅ Disponible' : '❌ No disponible'; ?></p>
-                            <p>• Fallback: Placeholder SVG</p>
-                            <p>• Ubicación: uploads/thumbnails/</p>
+                            <p>• <strong>Manual:</strong> Sube tu propia imagen</p>
+                            <p>• <strong>Automático:</strong> Se genera del video</p>
+                            <p>• <strong>YouTube:</strong> Usa thumbnail de YouTube</p>
                         </div>
                     </div>
                 </div>
@@ -573,6 +504,9 @@ if ($note_id) {
                 
                 if (this.value === 'youtube') {
                     document.getElementById('youtube-url').classList.remove('hidden');
+                } else if (this.value === 'video') {
+                    document.getElementById('file-upload').classList.remove('hidden');
+                    document.getElementById('thumbnail-upload').classList.remove('hidden');
                 } else {
                     document.getElementById('file-upload').classList.remove('hidden');
                 }
@@ -588,8 +522,34 @@ if ($note_id) {
             
             if (selectedType === 'youtube') {
                 document.getElementById('youtube-url').classList.remove('hidden');
+            } else if (selectedType === 'video') {
+                document.getElementById('file-upload').classList.remove('hidden');
+                document.getElementById('thumbnail-upload').classList.remove('hidden');
             } else {
                 document.getElementById('file-upload').classList.remove('hidden');
+            }
+        });
+
+        // Preview del archivo seleccionado
+        document.getElementById('thumbnail_file').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    // Crear preview del thumbnail
+                    let preview = document.getElementById('thumbnail-preview');
+                    if (!preview) {
+                        preview = document.createElement('div');
+                        preview.id = 'thumbnail-preview';
+                        preview.className = 'mt-2';
+                        e.target.parentNode.appendChild(preview);
+                    }
+                    preview.innerHTML = `
+                        <p class="text-xs text-green-600 mb-1">Vista previa del thumbnail:</p>
+                        <img src="${e.target.result}" class="w-full max-h-20 object-cover rounded border">
+                    `;
+                };
+                reader.readAsDataURL(file);
             }
         });
     </script>

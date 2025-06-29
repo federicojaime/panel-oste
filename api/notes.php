@@ -1,9 +1,9 @@
 <?php
-// api/notes.php - API para obtener notas (para el frontend React)
+// api/notes.php - API ACTUALIZADA CON THUMBNAILS
 
 // Headers CORS y de contenido
 header('Content-Type: application/json; charset=utf-8');
-header('Access-Control-Allow-Origin: *'); // En producción, cambia * por tu dominio específico
+header('Access-Control-Allow-Origin: *'); 
 header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type, Authorization');
 
@@ -21,7 +21,6 @@ try {
     $db = $database->getConnection();
 
     $method = $_SERVER['REQUEST_METHOD'];
-    $request_uri = $_SERVER['REQUEST_URI'];
 
     switch ($method) {
         case 'GET':
@@ -41,9 +40,14 @@ try {
                         if ($note['media_type'] === 'youtube') {
                             $media = $note['media_url'];
                         } else {
-                            // Construir URL completa para archivos subidos
                             $media = BASE_URL . 'uploads/' . $note['media_url'];
                         }
+                    }
+
+                    // Formatear thumbnail_url
+                    $thumbnail = null;
+                    if ($note['thumbnail_url']) {
+                        $thumbnail = BASE_URL . 'uploads/thumbnails/' . $note['thumbnail_url'];
                     }
 
                     // Formatear para compatibilidad con el JSON existente
@@ -56,7 +60,8 @@ try {
                         'media' => $media,
                         'media_type' => $note['media_type'],
                         'video' => $note['media_type'] === 'video' ? $media : null,
-                        'thumbnail' => $note['thumbnail_url'] ? BASE_URL . 'uploads/thumbnails/' . $note['thumbnail_url'] : null, // NUEVO
+                        'thumbnail' => $thumbnail, // THUMBNAIL COMPLETO
+                        'thumbnail_url' => $thumbnail, // ALIAS
                         'featured' => (bool)$note['featured'],
                         'created_at' => $note['created_at'],
                         'updated_at' => $note['updated_at']
@@ -128,6 +133,12 @@ try {
                         }
                     }
 
+                    // Formatear thumbnail
+                    $thumbnail = null;
+                    if ($note['thumbnail_url']) {
+                        $thumbnail = BASE_URL . 'uploads/thumbnails/' . $note['thumbnail_url'];
+                    }
+
                     $formatted_notes[] = [
                         'id' => intval($note['id']),
                         'title' => $note['title'],
@@ -137,6 +148,8 @@ try {
                         'media' => $media,
                         'media_type' => $note['media_type'],
                         'video' => $note['media_type'] === 'video' ? $media : null,
+                        'thumbnail' => $thumbnail, // THUMBNAIL COMPLETO
+                        'thumbnail_url' => $thumbnail, // ALIAS
                         'featured' => (bool)$note['featured'],
                         'created_at' => $note['created_at'],
                         'updated_at' => $note['updated_at']
@@ -145,7 +158,9 @@ try {
 
                 // Respuesta con metadatos de paginación
                 $response = [
-                    'data' => $formatted_notes,
+                    'success' => true,
+                    'notes' => $formatted_notes, // CAMBIO: usar 'notes' en lugar de 'data'
+                    'data' => $formatted_notes,   // Mantener para compatibilidad
                     'pagination' => [
                         'current_page' => $page,
                         'per_page' => $limit,
@@ -172,3 +187,4 @@ try {
         'message' => $e->getMessage()
     ], JSON_UNESCAPED_UNICODE);
 }
+?>

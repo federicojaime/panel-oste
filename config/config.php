@@ -2,7 +2,7 @@
 // config/config.php - CORREGIDO SIN DUPLICADOS
 
 // Configuración de la aplicación
-define('BASE_URL', 'http://localhost/panel-oste/');
+define('BASE_URL', 'https://sergiotomasoste.com/panel-oste/');
 define('UPLOAD_DIR', 'uploads/');
 define('MAX_FILE_SIZE', 100 * 1024 * 1024); // 100MB para videos
 
@@ -217,10 +217,6 @@ function generateThumbnailFilename($noteId, $extension = 'jpg') {
 }
 
 /**
- * Log de actividad para thumbnails (útil para debugging)
- */
-
-/**
  * Obtiene estadísticas de thumbnails
  */
 function getThumbnailStats() {
@@ -249,5 +245,56 @@ function getThumbnailStats() {
         'total_size_mb' => round($totalSize / 1024 / 1024, 2),
         'ffmpeg_available' => checkFFmpegAvailability()
     ];
+}
+
+// FUNCIÓN SIMPLE PARA GENERAR THUMBNAILS
+function generateThumbnailSimple($videoPath, $noteId) {
+    // Verificar FFmpeg
+    $ffmpegTest = shell_exec('ffmpeg -version 2>&1');
+    if (strpos($ffmpegTest, 'ffmpeg version') === false) {
+        return generateSVGPlaceholder($noteId);
+    }
+    
+    // Crear directorio
+    $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
+    if (!is_dir($thumbnailDir)) {
+        mkdir($thumbnailDir, 0755, true);
+    }
+    
+    $thumbnailName = 'thumb_' . $noteId . '_' . time() . '.jpg';
+    $thumbnailPath = $thumbnailDir . $thumbnailName;
+    
+    // Comando simple de FFmpeg
+    $command = "ffmpeg -i \"$videoPath\" -ss 00:00:01 -vframes 1 -q:v 2 -y \"$thumbnailPath\" 2>&1";
+    $output = shell_exec($command);
+    
+    if (file_exists($thumbnailPath) && filesize($thumbnailPath) > 0) {
+        return $thumbnailName;
+    }
+    
+    // Si falla, crear SVG
+    return generateSVGPlaceholder($noteId);
+}
+
+function generateSVGPlaceholder($noteId) {
+    $thumbnailDir = UPLOAD_DIR . 'thumbnails/';
+    if (!is_dir($thumbnailDir)) {
+        mkdir($thumbnailDir, 0755, true);
+    }
+    
+    $thumbnailName = 'placeholder_' . $noteId . '.svg';
+    $thumbnailPath = $thumbnailDir . $thumbnailName;
+    
+    $svgContent = '<?xml version="1.0" encoding="UTF-8"?>
+<svg width="640" height="360" viewBox="0 0 640 360" xmlns="http://www.w3.org/2000/svg">
+    <rect width="640" height="360" fill="#374151"/>
+    <circle cx="320" cy="150" r="40" fill="#EF4444"/>
+    <polygon points="305,135 305,165 340,150" fill="white"/>
+    <text x="320" y="220" font-family="Arial" font-size="18" fill="white" text-anchor="middle">VIDEO</text>
+    <text x="320" y="250" font-family="Arial" font-size="14" fill="#9CA3AF" text-anchor="middle">Nota ' . $noteId . '</text>
+</svg>';
+    
+    file_put_contents($thumbnailPath, $svgContent);
+    return $thumbnailName;
 }
 ?>

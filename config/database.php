@@ -1,10 +1,10 @@
 <?php
 // config/database.php
 class Database {
-    private $host = 'localhost';
-    private $db_name = 'sergio_oste_admin';
-    private $username = 'root'; // Cambiar según tu configuración
-    private $password = '';     // Cambiar según tu configuración
+    private $host = 'srv1597.hstgr.io';
+    private $db_name = 'u565673608_web_oste';
+    private $username = 'u565673608_web_oste'; // Cambiar según tu configuración
+    private $password = 'AT~H*#A8U$q0';     // Cambiar según tu configuración
     public $conn;
 
     public function getConnection() {
